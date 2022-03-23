@@ -3,14 +3,14 @@ package plugin
 import (
 	"context"
 	"encoding/json"
-	"math/rand"
+	"fmt"
 	"time"
 
+	"github.com/astarte-platform/astarte-go/client"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/instancemgmt"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/log"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
-	"github.com/grafana/grafana-plugin-sdk-go/live"
 )
 
 // Make sure SampleDatasource implements required interfaces. This is important to do
@@ -23,25 +23,65 @@ import (
 // is useful to clean up resources used by previous datasource instance when a new datasource
 // instance created upon datasource settings changed.
 var (
-	_ backend.QueryDataHandler      = (*SampleDatasource)(nil)
-	_ backend.CheckHealthHandler    = (*SampleDatasource)(nil)
-	_ backend.StreamHandler         = (*SampleDatasource)(nil)
-	_ instancemgmt.InstanceDisposer = (*SampleDatasource)(nil)
+	_ backend.QueryDataHandler   = (*AppEngineDatasource)(nil)
+	_ backend.CheckHealthHandler = (*AppEngineDatasource)(nil)
+	// We're not interested in streaming
+	// _ backend.StreamHandler         = (*SampleDatasource)(nil)
+	_ instancemgmt.InstanceDisposer = (*AppEngineDatasource)(nil)
 )
 
-// NewSampleDatasource creates a new datasource instance.
-func NewSampleDatasource(_ backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
-	return &SampleDatasource{}, nil
+type appEngineDataSourceSourceSettings struct {
+	ApiUrl string `json:"apiUrl"`
+	Realm  string `json:"realm"`
+	Token  string `json:"token"`
 }
 
-// SampleDatasource is an example datasource which can respond to data queries, reports
-// its health and has streaming skills.
-type SampleDatasource struct{}
+func newAppEngineDatasourceSettings(instanceSettings backend.DataSourceInstanceSettings) (appEngineDataSourceSourceSettings, error) {
+	var settings appEngineDataSourceSourceSettings
+	if err := json.Unmarshal(instanceSettings.JSONData, &settings); err != nil {
+		return appEngineDataSourceSourceSettings{}, err
+	}
+	return settings, nil
+}
+
+// NewAppEngineDatasource creates a new datasource instance.
+func NewAppEngineDatasource(settings backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
+	log.DefaultLogger.Info("NewAppEngineDatasource called with", "backend_settings", settings)
+
+	datasource := &AppEngineDatasource{}
+	dsSettings, err := newAppEngineDatasourceSettings(settings)
+	if err != nil {
+		log.DefaultLogger.Error("Cannot read settings", "error", err)
+		return nil, err
+	}
+	log.DefaultLogger.Info("Starting with settings:", "realm", dsSettings.Realm, "token", dsSettings.Token, "apiUrl", dsSettings.ApiUrl)
+
+	// If localhost is used, one must specify AppEngine individual URL
+	astarteAPIClient, err := client.NewClient(dsSettings.ApiUrl, nil)
+	//astarteAPIClient, err := client.NewClientWithIndividualURLs(map[misc.AstarteService]string{misc.AppEngine: "http://localhost:4002"}, nil)
+	if err != nil {
+		log.DefaultLogger.Error("Cannot setup API client: ", "error", err)
+		return nil, err
+	}
+
+	astarteAPIClient.SetToken(dsSettings.Token)
+	datasource.astarteAPIClient = astarteAPIClient
+	datasource.realm = dsSettings.Realm
+	return datasource, nil
+}
+
+// AppEngineDatasource is a datasource which can respond to data queries and reports its health.
+type AppEngineDatasource struct {
+	astarteAPIClient *client.Client
+	realm            string
+}
 
 // Dispose here tells plugin SDK that plugin wants to clean up resources when a new instance
 // created. As soon as datasource settings change detected by SDK old datasource instance will
-// be disposed and a new one will be created using NewSampleDatasource factory function.
-func (d *SampleDatasource) Dispose() {
+// be disposed and a new one will be created using NewAppEngineDatasource factory function.
+func (d *AppEngineDatasource) Dispose() {
+	// Delete the client (the one with AppEngine address and token)
+	log.DefaultLogger.Info("Disposing of", "appengine_datasource", d)
 	// Clean up datasource instance resources.
 }
 
@@ -49,10 +89,8 @@ func (d *SampleDatasource) Dispose() {
 // req contains the queries []DataQuery (where each query contains RefID as a unique identifier).
 // The QueryDataResponse contains a map of RefID to the response for each query, and each response
 // contains Frames ([]*Frame).
-func (d *SampleDatasource) QueryData(ctx context.Context, req *backend.QueryDataRequest) (*backend.QueryDataResponse, error) {
+func (d *AppEngineDatasource) QueryData(ctx context.Context, req *backend.QueryDataRequest) (*backend.QueryDataResponse, error) {
 	log.DefaultLogger.Info("QueryData called", "request", req)
-
-	log.DefaultLogger.Info("ctx %v : %T \n req %v : %T\n", ctx, ctx, req, req)
 
 	// create response struct
 	response := backend.NewQueryDataResponse()
@@ -66,49 +104,84 @@ func (d *SampleDatasource) QueryData(ctx context.Context, req *backend.QueryData
 		response.Responses[q.RefID] = res
 	}
 
-	log.DefaultLogger.Info("response %v : %T\n", response, response)
-
+	log.DefaultLogger.Info("Returning response", "response", response)
 	return response, nil
 }
 
 type queryModel struct {
-	WithStreaming bool `json:"withStreaming"`
+	Device        string `json:"device"`
+	InterfaceName string `json:"interfaceName"`
+	Path          string `json:"path"`
 }
 
-func (d *SampleDatasource) query(_ context.Context, pCtx backend.PluginContext, query backend.DataQuery) backend.DataResponse {
+func (d *AppEngineDatasource) query(_ context.Context, pCtx backend.PluginContext, query backend.DataQuery) backend.DataResponse {
 	response := backend.DataResponse{}
 
 	// Unmarshal the JSON into our queryModel.
 	var qm queryModel
 
+	log.DefaultLogger.Info("Received query JSON", "json_as_string", string(query.JSON))
+
 	response.Error = json.Unmarshal(query.JSON, &qm)
 	if response.Error != nil {
+		log.DefaultLogger.Error("Error in query model unmarshal", "error", response.Error)
 		return response
 	}
 
 	// create data frame response.
 	frame := data.NewFrame("response")
 
-	// add fields.
-	frame.Fields = append(frame.Fields,
-		data.NewField("time", nil, []time.Time{query.TimeRange.From, query.TimeRange.To}),
-		data.NewField("values", nil, []int64{10, 20}),
-	)
+	paginator, err := d.astarteAPIClient.AppEngine.GetDatastreamsTimeWindowPaginator(d.realm, qm.Device, client.AstarteDeviceID, qm.InterfaceName,
+		qm.Path, query.TimeRange.From, query.TimeRange.To, client.AscendingOrder)
 
-	// If query called with streaming on then return a channel
-	// to subscribe on a client-side and consume updates from a plugin.
-	// Feel free to remove this if you don't need streaming for your datasource.
-	if qm.WithStreaming {
-		channel := live.Channel{
-			Scope:     live.ScopeDatasource,
-			Namespace: pCtx.DataSourceInstanceSettings.UID,
-			Path:      "stream",
-		}
-		frame.SetMeta(&data.FrameMeta{Channel: channel.String()})
+	if err != nil {
+		response.Error = err
+		return response
 	}
+
+	timestamps := []time.Time{}
+	values := []float64{}
+
+	for ok := true; ok; ok = paginator.HasNextPage() {
+		page, err := paginator.GetNextPage()
+		if err != nil {
+			log.DefaultLogger.Error("Next page paginator error", "error", err)
+			response.Error = err
+			return response
+		}
+
+		log.DefaultLogger.Info("Start reading Astarte data")
+
+		for _, v := range page {
+			switch v.Value.(type) {
+			case float64:
+				timestamps = append(timestamps, v.Timestamp)
+				values = append(values, v.Value.(float64))
+			case int64:
+				timestamps = append(timestamps, v.Timestamp)
+				values = append(values, float64(v.Value.(int64)))
+			default:
+				response.Error = fmt.Errorf("Device %s has no int/double data on interface %s, path %s", qm.Device, qm.InterfaceName, qm.Path)
+				log.DefaultLogger.Error("Error on value_type read", "value_type", response.Error)
+				return response
+			}
+		}
+	}
+
+	log.DefaultLogger.Info("Successful Astarte data reading")
+
+	TimeField := data.NewField("Time", nil, timestamps)
+	log.DefaultLogger.Info("Successful time field creation")
+
+	ValueField := data.NewField("Value", nil, values)
+	log.DefaultLogger.Info("Successful value field creation")
+
+	frame.Fields = append(frame.Fields, TimeField, ValueField)
+	log.DefaultLogger.Info("Successful frame field append")
 
 	// add the frames to the response.
 	response.Frames = append(response.Frames, frame)
+	log.DefaultLogger.Info("Successful response frame append", "response", response)
 
 	return response
 }
@@ -117,82 +190,23 @@ func (d *SampleDatasource) query(_ context.Context, pCtx backend.PluginContext, 
 // The main use case for these health checks is the test button on the
 // datasource configuration page which allows users to verify that
 // a datasource is working as expected.
-func (d *SampleDatasource) CheckHealth(_ context.Context, req *backend.CheckHealthRequest) (*backend.CheckHealthResult, error) {
+func (d *AppEngineDatasource) CheckHealth(_ context.Context, req *backend.CheckHealthRequest) (*backend.CheckHealthResult, error) {
 	log.DefaultLogger.Info("CheckHealth called", "request", req)
 
 	var status = backend.HealthStatusOk
 	var message = "Data source is working"
 
-	if rand.Int()%2 == 0 {
+	// Run an actual query to Astarte, so that our JWT is checked, too
+	_, err := d.astarteAPIClient.AppEngine.GetDevicesStats(d.realm)
+
+	if err != nil {
+		log.DefaultLogger.Error("CheckHealth error", "err", err)
 		status = backend.HealthStatusError
-		message = "randomized error"
+		message = err.Error()
 	}
 
 	return &backend.CheckHealthResult{
 		Status:  status,
 		Message: message,
-	}, nil
-}
-
-// SubscribeStream is called when a client wants to connect to a stream. This callback
-// allows sending the first message.
-func (d *SampleDatasource) SubscribeStream(_ context.Context, req *backend.SubscribeStreamRequest) (*backend.SubscribeStreamResponse, error) {
-	log.DefaultLogger.Info("SubscribeStream called", "request", req)
-
-	status := backend.SubscribeStreamStatusPermissionDenied
-	if req.Path == "stream" {
-		// Allow subscribing only on expected path.
-		status = backend.SubscribeStreamStatusOK
-	}
-	return &backend.SubscribeStreamResponse{
-		Status: status,
-	}, nil
-}
-
-// RunStream is called once for any open channel.  Results are shared with everyone
-// subscribed to the same channel.
-func (d *SampleDatasource) RunStream(ctx context.Context, req *backend.RunStreamRequest, sender *backend.StreamSender) error {
-	log.DefaultLogger.Info("RunStream called", "request", req)
-
-	// Create the same data frame as for query data.
-	frame := data.NewFrame("response")
-
-	// Add fields (matching the same schema used in QueryData).
-	frame.Fields = append(frame.Fields,
-		data.NewField("time", nil, make([]time.Time, 1)),
-		data.NewField("values", nil, make([]int64, 1)),
-	)
-
-	counter := 0
-
-	// Stream data frames periodically till stream closed by Grafana.
-	for {
-		select {
-		case <-ctx.Done():
-			log.DefaultLogger.Info("Context done, finish streaming", "path", req.Path)
-			return nil
-		case <-time.After(time.Second):
-			// Send new data periodically.
-			frame.Fields[0].Set(0, time.Now())
-			frame.Fields[1].Set(0, int64(10*(counter%2+1)))
-
-			counter++
-
-			err := sender.SendFrame(frame, data.IncludeAll)
-			if err != nil {
-				log.DefaultLogger.Error("Error sending frame", "error", err)
-				continue
-			}
-		}
-	}
-}
-
-// PublishStream is called when a client sends a message to the stream.
-func (d *SampleDatasource) PublishStream(_ context.Context, req *backend.PublishStreamRequest) (*backend.PublishStreamResponse, error) {
-	log.DefaultLogger.Info("PublishStream called", "request", req)
-
-	// Do not allow publishing at all.
-	return &backend.PublishStreamResponse{
-		Status: backend.PublishStreamStatusPermissionDenied,
 	}, nil
 }
