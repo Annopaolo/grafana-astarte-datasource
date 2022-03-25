@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/astarte-platform/astarte-go/client"
@@ -163,9 +164,16 @@ func (d *AppEngineDatasource) query(_ context.Context, pCtx backend.PluginContex
 			case int64:
 				timestamps = append(timestamps, v.Timestamp)
 				values = append(values, float64(v.Value.(int64)))
+			case string:
+				if f, err := strconv.ParseFloat(v.Value.(string), 64); err != nil {
+					log.DefaultLogger.Warn("Could not parse as numeric datatype", "value", v.Value, "error", err)
+				} else {
+					timestamps = append(timestamps, v.Timestamp)
+					values = append(values, f)
+				}
 			default:
-				response.Error = fmt.Errorf("Device %s has no int/double data on interface %s, path %s", qm.Device, qm.InterfaceName, qm.Path)
-				log.DefaultLogger.Error("Error on value_type read", "value_type", response.Error)
+				response.Error = fmt.Errorf("Device %s has data of non-numeric type on interface %s, path %s", qm.Device, qm.InterfaceName, qm.Path)
+				log.DefaultLogger.Error("Error on value type read", "error", response.Error)
 				return response
 			}
 		}
