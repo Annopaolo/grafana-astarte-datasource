@@ -15,5 +15,5 @@ ARG GRAFANA_API_KEY
 ENV GRAFANA_API_KEY=$GRAFANA_API_KEY
 RUN npx grafana-toolkit plugin:sign --signatureType private --rootUrls http://localhost:3000/
 
-FROM grafana/grafana:8.2.6
+FROM grafana/grafana:8.4.4
 COPY --from=jsbuilder /app/dist/ /var/lib/grafana/plugins/astarte-datasource/
