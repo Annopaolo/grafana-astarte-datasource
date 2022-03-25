@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/astarte-platform/astarte-go/client"
@@ -23,8 +25,9 @@ import (
 // is useful to clean up resources used by previous datasource instance when a new datasource
 // instance created upon datasource settings changed.
 var (
-	_ backend.QueryDataHandler   = (*AppEngineDatasource)(nil)
-	_ backend.CheckHealthHandler = (*AppEngineDatasource)(nil)
+	_ backend.QueryDataHandler    = (*AppEngineDatasource)(nil)
+	_ backend.CheckHealthHandler  = (*AppEngineDatasource)(nil)
+	_ backend.CallResourceHandler = (*AppEngineDatasource)(nil)
 	// We're not interested in streaming
 	// _ backend.StreamHandler         = (*SampleDatasource)(nil)
 	_ instancemgmt.InstanceDisposer = (*AppEngineDatasource)(nil)
@@ -209,4 +212,35 @@ func (d *AppEngineDatasource) CheckHealth(_ context.Context, req *backend.CheckH
 		Status:  status,
 		Message: message,
 	}, nil
+}
+
+func (d *AppEngineDatasource) CallResource(ctx context.Context, req *backend.CallResourceRequest, sender backend.CallResourceResponseSender) error {
+	log.DefaultLogger.Info("CallResource  called", "request", req)
+
+	u, _ := url.Parse(req.URL)
+	params, _ := url.ParseQuery(u.RawQuery)
+	deviceID := params["device_id"][0]
+
+	details, err := d.astarteAPIClient.AppEngine.GetDevice(d.realm, deviceID, client.AstarteDeviceID)
+	if err != nil {
+		log.DefaultLogger.Error("Device stats error error", "err", err)
+		response := &backend.CallResourceResponse{
+			Status: http.StatusBadRequest,
+			Body:   []byte(err.Error()),
+		}
+		return sender.Send(response)
+	}
+
+	log.DefaultLogger.Info("Received Astarte info for device", "device_id", deviceID, "details", details)
+
+	interfaces := []string{}
+	for interfaceName := range details.Introspection {
+		interfaces = append(interfaces, interfaceName)
+	}
+
+	body, _ := json.Marshal(interfaces)
+	return sender.Send(&backend.CallResourceResponse{
+		Status: http.StatusOK,
+		Body:   body,
+	})
 }
