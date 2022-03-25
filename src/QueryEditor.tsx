@@ -1,7 +1,7 @@
 /*
    This file is part of Astarte.
 
-   Copyright 2021 Ispirata Srl
+   Copyright 2021-2022 Ispirata Srl
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -16,31 +16,35 @@
    limitations under the License.
 */
 
-import defaults from 'lodash/defaults';
-
-import React, { ChangeEvent, Component } from 'react';
+import React, { ChangeEvent, useState, useEffect } from 'react';
 import { LegacyForms } from '@grafana/ui';
 import { QueryEditorProps } from '@grafana/data';
 import { DataSource } from './DataSource';
-import { defaultQuery, AppEngineDataSourceOptions, AppEngineQuery } from './types';
+import { AppEngineDataSourceOptions, AppEngineQuery } from './types';
 
 const { FormField } = LegacyForms;
 
 type Props = QueryEditorProps<DataSource, AppEngineQuery, AppEngineDataSourceOptions>;
 
-interface State {}
-
 function isValidQuery(query: AppEngineQuery) {
   return query.interfaceName !== '' && query.device !== '';
 }
 
-export class QueryEditor extends Component<Props, State> {
-  constructor(props: Props) {
-    super(props);
-  }
+export const QueryEditor = ({ datasource, query, onChange, onRunQuery }: Props) => {
+  const [interfaces, setInterfaces] = useState<string[]>([]);
+  const { device, interfaceName, path } = query;
 
-  onDeviceChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const { onChange, query, onRunQuery } = this.props;
+  useEffect(() => {
+    datasource
+      .getResource('interfaces', { device_id: query.device })
+      .then(setInterfaces)
+      .catch((error) => {
+        console.error(error);
+        setInterfaces([]);
+      });
+  }, [datasource, query.device]);
+
+  const onDeviceChange = (event: ChangeEvent<HTMLInputElement>) => {
     const deviceId = event.target.value;
     const updatedQuery = { ...query, device: deviceId };
     onChange(updatedQuery);
@@ -49,8 +53,7 @@ export class QueryEditor extends Component<Props, State> {
     }
   };
 
-  onInterfaceNameChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const { onChange, query, onRunQuery } = this.props;
+  const onInterfaceNameChange = (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const updatedQuery = { ...query, interfaceName: event.target.value };
     onChange(updatedQuery);
     if (isValidQuery(updatedQuery)) {
@@ -58,8 +61,7 @@ export class QueryEditor extends Component<Props, State> {
     }
   };
 
-  onPathChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const { onChange, query, onRunQuery } = this.props;
+  const onPathChange = (event: ChangeEvent<HTMLInputElement>) => {
     const updatedQuery = { ...query, path: event.target.value };
     onChange(updatedQuery);
     if (isValidQuery(updatedQuery)) {
@@ -67,28 +69,34 @@ export class QueryEditor extends Component<Props, State> {
     }
   };
 
-  render() {
-    const query = defaults(this.props.query, defaultQuery);
-    const { device, interfaceName, path } = query;
-
-    return (
-      <div className="gf-form">
-        <FormField width={4} value={device} onChange={this.onDeviceChange} label="Device ID" tooltip="The device ID" />
+  return (
+    <div className="gf-form">
+      <FormField width={4} value={device} onChange={onDeviceChange} label="Device ID" tooltip="The device ID" />
+      {interfaces.length > 0 ? (
+        <FormField
+          label="Interface"
+          labelWidth={4}
+          inputEl={
+            <select className="gf-form-input width-20" value={interfaceName} onChange={onInterfaceNameChange}>
+              <option value="">Select an interface</option>
+              {interfaces.map((iface) => (
+                <option key={iface} value={iface}>
+                  {iface}
+                </option>
+              ))}
+            </select>
+          }
+        />
+      ) : (
         <FormField
           labelWidth={4}
           value={interfaceName}
-          onChange={this.onInterfaceNameChange}
+          onChange={onInterfaceNameChange}
           label="Interface"
           tooltip="The interface to query"
         />
-        <FormField
-          width={4}
-          value={path}
-          onChange={this.onPathChange}
-          label="Path"
-          tooltip="The interface path to query"
-        />
-      </div>
-    );
-  }
-}
+      )}
+      <FormField width={4} value={path} onChange={onPathChange} label="Path" tooltip="The interface path to query" />
+    </div>
+  );
+};
