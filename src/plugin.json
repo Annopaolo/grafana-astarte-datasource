@@ -5,6 +5,7 @@
   "id": "astarte-appengine-datasource",
   "metrics": true,
   "backend": true,
+  "alerting": true,
   "executable": "gpx_astarte-appengine-datasource",
   "info": {
     "description": "Open source data orchestration platform",
