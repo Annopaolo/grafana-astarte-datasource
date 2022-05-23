@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/astarte-platform/astarte-go/client"
+	"github.com/astarte-platform/astarte-go/interfaces"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/instancemgmt"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/log"
@@ -227,28 +228,73 @@ func (d *AppEngineDatasource) CallResource(ctx context.Context, req *backend.Cal
 
 	u, _ := url.Parse(req.URL)
 	params, _ := url.ParseQuery(u.RawQuery)
-	deviceID := params["device_id"][0]
 
+	if params["device_id"] != nil {
+		// if device_id is provided, we've been asked for device introspection
+		interfaces, err := d.getDeviceIntrospection(params["device_id"][0])
+		if err != nil {
+			sendBadRequest(err, sender)
+		}
+		body, _ := json.Marshal(interfaces)
+		return sendResult(body, sender)
+	} else if params["name"] != nil && params["major"] != nil {
+		// we assume a valid int is always passed as interface major value
+		major, _ := strconv.Atoi(params["major"][0])
+		iface, err := d.getInterface(params["name"][0], major)
+		if err != nil {
+			sendBadRequest(err, sender)
+		}
+		body, _ := json.Marshal(iface)
+		return sendResult(body, sender)
+	} else {
+		// don't know what else could we provide
+		return sendBadRequest(fmt.Errorf("unexpected request"), sender)
+	}
+}
+
+func (d *AppEngineDatasource) getInterface(interfaceName string, interfaceMajor int) (interfaces.AstarteInterface, error) {
+	interfaceDoc, err := d.astarteAPIClient.RealmManagement.GetInterface(d.realm, interfaceName, interfaceMajor)
+	if err != nil {
+		log.DefaultLogger.Error("Can't get interface data", "err", err, "interface", interfaceName, "interfaceMajor", interfaceMajor)
+		return interfaces.AstarteInterface{}, err
+	}
+	log.DefaultLogger.Info("Received doc for interface", "interface", interfaceName, "major", interfaceMajor)
+
+	return interfaceDoc, nil
+}
+
+type introspectionEntry struct {
+	Name  string `json:"name"`
+	Major int    `json:"major"`
+	Minor int    `json:"minor"`
+}
+
+func (d *AppEngineDatasource) getDeviceIntrospection(deviceID string) ([]introspectionEntry, error) {
 	details, err := d.astarteAPIClient.AppEngine.GetDevice(d.realm, deviceID, client.AstarteDeviceID)
 	if err != nil {
-		log.DefaultLogger.Error("Device stats error error", "err", err)
-		response := &backend.CallResourceResponse{
-			Status: http.StatusBadRequest,
-			Body:   []byte(err.Error()),
-		}
-		return sender.Send(response)
+		log.DefaultLogger.Error("Can't get device introspection", "err", err, "device_id", deviceID)
+		return nil, err
+	}
+	log.DefaultLogger.Info("Received Astarte introspection for device", "device_id", deviceID)
+	interfaces := []introspectionEntry{}
+	for interfaceName, interfaceDetails := range details.Introspection {
+		interfaces = append(interfaces, introspectionEntry{Name: interfaceName, Major: interfaceDetails.Major, Minor: interfaceDetails.Minor})
 	}
 
-	log.DefaultLogger.Info("Received Astarte info for device", "device_id", deviceID, "details", details)
+	return interfaces, nil
+}
 
-	interfaces := []string{}
-	for interfaceName := range details.Introspection {
-		interfaces = append(interfaces, interfaceName)
-	}
-
-	body, _ := json.Marshal(interfaces)
+func sendResult(body []byte, sender backend.CallResourceResponseSender) error {
+	log.DefaultLogger.Info("Sending call resource response")
 	return sender.Send(&backend.CallResourceResponse{
 		Status: http.StatusOK,
 		Body:   body,
+	})
+}
+
+func sendBadRequest(err error, sender backend.CallResourceResponseSender) error {
+	return sender.Send(&backend.CallResourceResponse{
+		Status: http.StatusBadRequest,
+		Body:   []byte(err.Error()),
 	})
 }
