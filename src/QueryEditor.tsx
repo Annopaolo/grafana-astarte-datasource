@@ -27,22 +27,54 @@ const { FormField } = LegacyForms;
 type Props = QueryEditorProps<DataSource, AppEngineQuery, AppEngineDataSourceOptions>;
 
 function isValidQuery(query: AppEngineQuery) {
-  return query.interfaceName !== '' && query.device !== '';
+  return query.interfaceName !== '' && query.device !== '' && query.path !== '';
 }
 
+type InterfaceID = {
+  name: string;
+  major: number;
+  minor: number;
+};
+
+type AstarteMapping = {
+  endpoint: string;
+};
+
+type AstarteInterface = {
+  mappings: AstarteMapping[];
+};
+
 export const QueryEditor = ({ datasource, query, onChange, onRunQuery }: Props) => {
-  const [interfaces, setInterfaces] = useState<string[]>([]);
+  const [introspection, setIntrospection] = useState<InterfaceID[]>([]);
+  const [interfaceDefinition, setInterfaceDefinition] = useState<AstarteInterface | null>(null);
   const { device, interfaceName, path } = query;
 
   useEffect(() => {
     datasource
-      .getResource('interfaces', { device_id: query.device })
-      .then(setInterfaces)
+      .getResource('introspection', { device_id: query.device })
+      .then(setIntrospection)
       .catch((error) => {
         console.error(error);
-        setInterfaces([]);
+        setIntrospection([]);
       });
   }, [datasource, query.device]);
+
+  useEffect(() => {
+    if (introspection) {
+      const interfaceID = introspection.find((id) => id.name === interfaceName);
+      if (interfaceName && interfaceID) {
+        datasource
+          .getResource('interface', { name: interfaceName, major: interfaceID.major })
+          .then(setInterfaceDefinition)
+          .catch((error) => {
+            console.error(error);
+            setInterfaceDefinition(null);
+          });
+      } else {
+        setInterfaceDefinition(null);
+      }
+    }
+  }, [datasource, interfaceName, introspection]);
 
   const onDeviceChange = (event: ChangeEvent<HTMLInputElement>) => {
     const deviceId = event.target.value;
@@ -68,6 +100,9 @@ export const QueryEditor = ({ datasource, query, onChange, onRunQuery }: Props) 
       onRunQuery();
     }
   };
+
+  const interfaces = introspection.map((iid) => iid.name);
+  const endpoints = interfaceDefinition?.mappings.map((m) => m.endpoint);
 
   return (
     <div className="gf-form">
@@ -96,7 +131,23 @@ export const QueryEditor = ({ datasource, query, onChange, onRunQuery }: Props) 
           tooltip="The interface to query"
         />
       )}
-      <FormField width={4} value={path} onChange={onPathChange} label="Path" tooltip="The interface path to query" />
+      <FormField
+        width={4}
+        value={path}
+        onChange={onPathChange}
+        label="Path"
+        tooltip="The interface path to query"
+        list={endpoints && 'endpointSuggestions'}
+      />
+      {endpoints && (
+        <datalist id="endpointSuggestions">
+          {endpoints.map((e) => (
+            <option key={e} value={e}>
+              {e}
+            </option>
+          ))}
+        </datalist>
+      )}
     </div>
   );
 };
