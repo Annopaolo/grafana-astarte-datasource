@@ -107,29 +107,22 @@ export const QueryEditor = ({ datasource, query, onChange, onRunQuery }: Props) 
   return (
     <div className="gf-form">
       <FormField width={4} value={device} onChange={onDeviceChange} label="Device ID" tooltip="The device ID" />
-      {interfaces.length > 0 ? (
-        <FormField
-          label="Interface"
-          labelWidth={4}
-          inputEl={
-            <select className="gf-form-input width-20" value={interfaceName} onChange={onInterfaceNameChange}>
-              <option value="">Select an interface</option>
-              {interfaces.map((iface) => (
-                <option key={iface} value={iface}>
-                  {iface}
-                </option>
-              ))}
-            </select>
-          }
-        />
-      ) : (
-        <FormField
-          labelWidth={4}
-          value={interfaceName}
-          onChange={onInterfaceNameChange}
-          label="Interface"
-          tooltip="The interface to query"
-        />
+      <FormField
+        width={4}
+        value={interfaceName}
+        onChange={onInterfaceNameChange}
+        label="Interface"
+        tooltip="The interface to query"
+        list={interfaces.length > 0 ? 'interfaceSuggestions' : undefined}
+      />
+      {interfaces.length > 0 && (
+        <datalist id="interfaceSuggestions">
+          {interfaces.map((iface) => (
+            <option key={iface} value={iface}>
+              {iface}
+            </option>
+          ))}
+        </datalist>
       )}
       <FormField
         width={4}
@@ -137,7 +130,7 @@ export const QueryEditor = ({ datasource, query, onChange, onRunQuery }: Props) 
         onChange={onPathChange}
         label="Path"
         tooltip="The interface path to query"
-        list={endpoints && 'endpointSuggestions'}
+        list={endpoints && endpoints.length > 0 ? 'endpointSuggestions' : undefined}
       />
       {endpoints && (
         <datalist id="endpointSuggestions">
