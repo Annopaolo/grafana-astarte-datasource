@@ -28,100 +28,59 @@ const { FormField } = LegacyForms;
 
 type Props = QueryEditorProps<DataSource, AppEngineQuery, AppEngineDataSourceOptions>;
 
-interface State {
-  deviceInterfaces: string[];
+interface State {}
+
+function isValidQuery(query: AppEngineQuery) {
+  return query.interfaceName !== '' && query.device !== '';
 }
 
 export class QueryEditor extends Component<Props, State> {
-  state: State;
   constructor(props: Props) {
     super(props);
-    this.state = {
-      deviceInterfaces: [],
-    };
-
-    this.getDeviceInterfaces(props.query.device);
   }
-
-  getDeviceInterfaces = (deviceId: string) => {
-    const { datasource } = this.props;
-    if (!deviceId) {
-      return;
-    }
-    datasource
-      .getDeviceInfo(deviceId)
-      .then((deviceInfo) => {
-        const interfaces = Object.keys(deviceInfo.introspection);
-        this.setState({ deviceInterfaces: interfaces });
-      })
-      .catch(() => {
-        this.setState({ deviceInterfaces: [] });
-      });
-  };
 
   onDeviceChange = (event: ChangeEvent<HTMLInputElement>) => {
     const { onChange, query, onRunQuery } = this.props;
     const deviceId = event.target.value;
-    onChange({ ...query, device: deviceId });
-    onRunQuery();
-
-    this.getDeviceInterfaces(deviceId);
+    const updatedQuery = { ...query, device: deviceId };
+    onChange(updatedQuery);
+    if (isValidQuery(updatedQuery)) {
+      onRunQuery();
+    }
   };
 
   onInterfaceNameChange = (event: ChangeEvent<HTMLInputElement>) => {
     const { onChange, query, onRunQuery } = this.props;
-    onChange({ ...query, interfaceName: event.target.value });
-    onRunQuery();
-  };
-
-  onInterfaceSelectionChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    const { onChange, query, onRunQuery } = this.props;
-    onChange({ ...query, interfaceName: event.target.value });
-    onRunQuery();
+    const updatedQuery = { ...query, interfaceName: event.target.value };
+    onChange(updatedQuery);
+    if (isValidQuery(updatedQuery)) {
+      onRunQuery();
+    }
   };
 
   onPathChange = (event: ChangeEvent<HTMLInputElement>) => {
     const { onChange, query, onRunQuery } = this.props;
-    onChange({ ...query, path: event.target.value });
-    onRunQuery();
+    const updatedQuery = { ...query, path: event.target.value };
+    onChange(updatedQuery);
+    if (isValidQuery(updatedQuery)) {
+      onRunQuery();
+    }
   };
 
   render() {
     const query = defaults(this.props.query, defaultQuery);
     const { device, interfaceName, path } = query;
-    const { deviceInterfaces } = this.state;
 
     return (
       <div className="gf-form">
         <FormField width={4} value={device} onChange={this.onDeviceChange} label="Device ID" tooltip="The device ID" />
-        {deviceInterfaces.length > 0 ? (
-          <FormField
-            label="Interface"
-            labelWidth={4}
-            inputEl={
-              <select
-                className="gf-form-input width-20"
-                value={interfaceName}
-                onChange={this.onInterfaceSelectionChange}
-              >
-                <option value="">Select an interface</option>
-                {deviceInterfaces.map((iface) => (
-                  <option key={iface} value={iface}>
-                    {iface}
-                  </option>
-                ))}
-              </select>
-            }
-          />
-        ) : (
-          <FormField
-            labelWidth={4}
-            value={interfaceName}
-            onChange={this.onInterfaceNameChange}
-            label="Interface"
-            tooltip="The interface to query"
-          />
-        )}
+        <FormField
+          labelWidth={4}
+          value={interfaceName}
+          onChange={this.onInterfaceNameChange}
+          label="Interface"
+          tooltip="The interface to query"
+        />
         <FormField
           width={4}
           value={path}
